@@ -5,7 +5,6 @@ SRC = lib/elasticlunr.js \
 	lib/tokenizer.js \
 	lib/pipeline.js \
 	lib/index.js \
-	lib/document_store.js \
 	lib/stemmer.js \
 	lib/stop_word_filter.js \
 	lib/trimmer.js \
