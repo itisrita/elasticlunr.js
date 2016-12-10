@@ -578,7 +578,7 @@ elasticlunr.Index = function () {
   this._fields = [];
   this._ref = 'id';
   this.pipeline = new elasticlunr.Pipeline;
-  this.documentStore = new elasticlunr.DocumentStore;
+  this.documentStoreLength = 0;
   this.index = {};
   this.eventEmitter = new elasticlunr.EventEmitter;
   this._idfCache = {};
@@ -626,19 +626,34 @@ elasticlunr.Index.prototype.off = function (name, fn) {
 elasticlunr.Index.load = function (serialisedData) {
   if (serialisedData.version !== elasticlunr.version) {
     elasticlunr.utils.warn('version mismatch: current '
-                    + elasticlunr.version + ' importing ' + serialisedData.version);
+        + elasticlunr.version + ' importing ' + serialisedData.version);
   }
 
   var idx = new this;
 
   idx._fields = serialisedData.fields;
   idx._ref = serialisedData.ref;
-  idx.documentStore = elasticlunr.DocumentStore.load(serialisedData.documentStore);
   idx.pipeline = elasticlunr.Pipeline.load(serialisedData.pipeline);
   idx.index = {};
   for (var field in serialisedData.index) {
     idx.index[field] = elasticlunr.InvertedIndex.load(serialisedData.index[field]);
   }
+
+  return idx;
+};
+
+elasticlunr.Index.loadInfo = function (serialisedData) {
+  if (serialisedData.version !== elasticlunr.version) {
+    elasticlunr.utils.warn('version mismatch: current '
+        + elasticlunr.version + ' importing ' + serialisedData.version);
+  }
+
+  var idx = new this;
+
+  idx._fields = serialisedData.fields;
+  idx._ref = serialisedData.ref;
+  idx.pipeline = elasticlunr.Pipeline.load(serialisedData.pipeline);
+  idx.index = {};
 
   return idx;
 };
@@ -690,10 +705,6 @@ elasticlunr.Index.prototype.setRef = function (refName) {
  * @return {elasticlunr.Index}
  * @memberOf Index
  */
-elasticlunr.Index.prototype.saveDocument = function (save) {
-  this.documentStore = new elasticlunr.DocumentStore(save);
-  return this;
-};
 
 /**
  * Add a JSON format document to the index.
@@ -716,10 +727,9 @@ elasticlunr.Index.prototype.addDoc = function (doc, emitEvent) {
 
   var docRef = doc[this._ref];
 
-  this.documentStore.addDoc(docRef, doc);
+  this.documentStoreLength = this.documentStoreLength + 1;
   this._fields.forEach(function (field) {
     var fieldTokens = this.pipeline.run(elasticlunr.tokenizer(doc[field]));
-    this.documentStore.addFieldLength(docRef, field, fieldTokens.length);
 
     var tokenCount = {};
     fieldTokens.forEach(function (token) {
@@ -743,27 +753,6 @@ elasticlunr.Index.prototype.addDoc = function (doc, emitEvent) {
  * To make sure documents no longer show up in search results they can be
  * removed from the index using this method.
  *
- * A 'remove' event is emitted with the document that has been removed and the index
- * the document has been removed from. This event can be silenced by passing false
- * as the second argument to remove.
- *
- * If user setting DocumentStore not storing the documents, then remove doc by docRef is not allowed.
- *
- * @param {String|Integer} docRef The document ref to remove from the index.
- * @param {Boolean} emitEvent Whether to emit remove events, defaults to true
- * @memberOf Index
- */
-elasticlunr.Index.prototype.removeDocByRef = function (docRef, emitEvent) {
-  if (!docRef) return;
-  if (this.documentStore.isDocStored() === false) {
-    return;
-  }
-
-  if (!this.documentStore.hasDoc(docRef)) return;
-  var doc = this.documentStore.getDoc(docRef);
-  this.removeDoc(doc, false);
-};
-
 /**
  * Removes a document from the index.
  * This remove operation could work even the original doc is not store in the DocumentStore.
@@ -774,60 +763,8 @@ elasticlunr.Index.prototype.removeDocByRef = function (docRef, emitEvent) {
  * A 'remove' event is emitted with the document that has been removed and the index
  * the document has been removed from. This event can be silenced by passing false
  * as the second argument to remove.
- *
- *
- * @param {Object} doc The document ref to remove from the index.
- * @param {Boolean} emitEvent Whether to emit remove events, defaults to true
- * @memberOf Index
- */
-elasticlunr.Index.prototype.removeDoc = function (doc, emitEvent) {
-  if (!doc) return;
 
-  var emitEvent = emitEvent === undefined ? true : emitEvent;
 
-  var docRef = doc[this._ref];
-  if (!this.documentStore.hasDoc(docRef)) return;
-
-  this.documentStore.removeDoc(docRef);
-
-  this._fields.forEach(function (field) {
-    var fieldTokens = this.pipeline.run(elasticlunr.tokenizer(doc[field]));
-    fieldTokens.forEach(function (token) {
-      this.index[field].removeToken(token, docRef);
-    }, this);
-  }, this);
-
-  if (emitEvent) this.eventEmitter.emit('remove', doc, this);
-};
-
-/**
- * Updates a document in the index.
- *
- * When a document contained within the index gets updated, fields changed,
- * added or removed, to make sure it correctly matched against search queries,
- * it should be updated in the index.
- *
- * This method is just a wrapper around `remove` and `add`
- *
- * An 'update' event is emitted with the document that has been updated and the index.
- * This event can be silenced by passing false as the second argument to update. Only
- * an update event will be fired, the 'add' and 'remove' events of the underlying calls
- * are silenced.
- *
- * @param {Object} doc The document to update in the index.
- * @param {Boolean} emitEvent Whether to emit update events, defaults to true
- * @see Index.prototype.remove
- * @see Index.prototype.add
- * @memberOf Index
- */
-elasticlunr.Index.prototype.updateDoc = function (doc, emitEvent) {
-  var emitEvent = emitEvent === undefined ? true : emitEvent;
-
-  this.removeDocByRef(doc[this._ref], false);
-  this.addDoc(doc, false);
-
-  if (emitEvent) this.eventEmitter.emit('update', doc, this);
-};
 
 /**
  * Calculates the inverse document frequency for a token within the index of a field.
@@ -843,7 +780,7 @@ elasticlunr.Index.prototype.idf = function (term, field) {
   if (Object.prototype.hasOwnProperty.call(this._idfCache, cacheKey)) return this._idfCache[cacheKey];
 
   var df = this.index[field].getDocFreq(term);
-  var idf = 1 + Math.log(this.documentStore.length / (df + 1));
+  var idf = 1 + Math.log(this.documentStoreLength / (df + 1));
   this._idfCache[cacheKey] = idf;
 
   return idf;
@@ -995,7 +932,7 @@ elasticlunr.Index.prototype.fieldSearch = function (queryTokens, fieldName, conf
 
       for (var docRef in docs) {
         var tf = this.index[fieldName].getTermFrequency(key, docRef);
-        var fieldLength = this.documentStore.getFieldLength(docRef, fieldName);
+        var fieldLength = 1;
         var fieldLengthNorm = 1;
         if (fieldLength != 0) {
           fieldLengthNorm = 1 / Math.sqrt(fieldLength);
@@ -1119,12 +1056,24 @@ elasticlunr.Index.prototype.toJSON = function () {
     version: elasticlunr.version,
     fields: this._fields,
     ref: this._ref,
-    documentStore: this.documentStore.toJSON(),
     index: indexJson,
     pipeline: this.pipeline.toJSON()
   };
 };
 
+elasticlunr.Index.prototype.infoToJSON = function () {
+  return {
+    version: elasticlunr.version,
+    fields: this._fields,
+    ref: this._ref,
+    pipeline: this.pipeline.toJSON()
+  };
+};
+
+elasticlunr.Index.prototype.loadInvertedIndex = function (field, data) {
+  this.index[field] = elasticlunr.InvertedIndex.load(data);
+  return this;
+};
 /**
  * Applies a plugin to the current index.
  *
@@ -1155,182 +1104,6 @@ elasticlunr.Index.prototype.use = function (plugin) {
   var args = Array.prototype.slice.call(arguments, 1);
   args.unshift(this);
   plugin.apply(this, args);
-};
-/*!
- * elasticlunr.DocumentStore
- * Copyright (C) 2016 Wei Song
- */
-
-/**
- * elasticlunr.DocumentStore is a simple key-value document store used for storing sets of tokens for
- * documents stored in index.
- *
- * elasticlunr.DocumentStore store original JSON format documents that you could build search snippet by this original JSON document.
- *
- * user could choose whether original JSON format document should be store, if no configuration then document will be stored defaultly.
- * If user care more about the index size, user could select not store JSON documents, then this will has some defects, such as user
- * could not use JSON document to generate snippets of search results.
- *
- * @param {Boolean} save If the original JSON document should be stored.
- * @constructor
- * @module
- */
-elasticlunr.DocumentStore = function (save) {
-  if (save === null || save === undefined) {
-    this._save = true;
-  } else {
-    this._save = save;
-  }
-
-  this.docs = {};
-  this.docInfo = {};
-  this.length = 0;
-};
-
-/**
- * Loads a previously serialised document store
- *
- * @param {Object} serialisedData The serialised document store to load.
- * @return {elasticlunr.DocumentStore}
- */
-elasticlunr.DocumentStore.load = function (serialisedData) {
-  var store = new this;
-
-  store.length = serialisedData.length;
-  store.docs = serialisedData.docs;
-  store.docInfo = serialisedData.docInfo;
-  store._save = serialisedData.save;
-
-  return store;
-};
-
-/**
- * check if current instance store the original doc
- *
- * @return {Boolean}
- */
-elasticlunr.DocumentStore.prototype.isDocStored = function () {
-  return this._save;
-};
-
-/**
- * Stores the given doc in the document store against the given id.
- * If docRef already exist, then update doc.
- *
- * Document is store by original JSON format, then you could use original document to generate search snippets.
- *
- * @param {Integer|String} docRef The key used to store the JSON format doc.
- * @param {Object} doc The JSON format doc.
- */
-elasticlunr.DocumentStore.prototype.addDoc = function (docRef, doc) {
-  if (!this.hasDoc(docRef)) this.length++;
-
-  if (this._save === true) {
-    this.docs[docRef] = clone(doc);
-  } else {
-    this.docs[docRef] = null;
-  }
-};
-
-/**
- * Retrieves the JSON doc from the document store for a given key.
- *
- * If docRef not found, return null.
- * If user set not storing the documents, return null.
- *
- * @param {Integer|String} docRef The key to lookup and retrieve from the document store.
- * @return {Object}
- * @memberOf DocumentStore
- */
-elasticlunr.DocumentStore.prototype.getDoc = function (docRef) {
-  if (this.hasDoc(docRef) === false) return null;
-  return this.docs[docRef];
-};
-
-/**
- * Checks whether the document store contains a key (docRef).
- *
- * @param {Integer|String} docRef The id to look up in the document store.
- * @return {Boolean}
- * @memberOf DocumentStore
- */
-elasticlunr.DocumentStore.prototype.hasDoc = function (docRef) {
-  return docRef in this.docs;
-};
-
-/**
- * Removes the value for a key in the document store.
- *
- * @param {Integer|String} docRef The id to remove from the document store.
- * @memberOf DocumentStore
- */
-elasticlunr.DocumentStore.prototype.removeDoc = function (docRef) {
-  if (!this.hasDoc(docRef)) return;
-
-  delete this.docs[docRef];
-  delete this.docInfo[docRef];
-  this.length--;
-};
-
-/**
- * Add field length of a document's field tokens from pipeline results.
- * The field length of a document is used to do field length normalization even without the original JSON document stored.
- *
- * @param {Integer|String} docRef document's id or reference
- * @param {String} fieldName field name
- * @param {Integer} length field length
- */
-elasticlunr.DocumentStore.prototype.addFieldLength = function (docRef, fieldName, length) {
-  if (docRef === null || docRef === undefined) return;
-  if (this.hasDoc(docRef) == false) return;
-
-  if (!this.docInfo[docRef]) this.docInfo[docRef] = {};
-  this.docInfo[docRef][fieldName] = length;
-};
-
-/**
- * Update field length of a document's field tokens from pipeline results.
- * The field length of a document is used to do field length normalization even without the original JSON document stored.
- *
- * @param {Integer|String} docRef document's id or reference
- * @param {String} fieldName field name
- * @param {Integer} length field length
- */
-elasticlunr.DocumentStore.prototype.updateFieldLength = function (docRef, fieldName, length) {
-  if (docRef === null || docRef === undefined) return;
-  if (this.hasDoc(docRef) == false) return;
-
-  this.addFieldLength(docRef, fieldName, length);
-};
-
-/**
- * get field length of a document by docRef
- *
- * @param {Integer|String} docRef document id or reference
- * @param {String} fieldName field name
- * @return {Integer} field length
- */
-elasticlunr.DocumentStore.prototype.getFieldLength = function (docRef, fieldName) {
-  if (docRef === null || docRef === undefined) return 0;
-
-  if (!(docRef in this.docs)) return 0;
-  if (!(fieldName in this.docInfo[docRef])) return 0;
-  return this.docInfo[docRef][fieldName];
-};
-
-/**
- * Returns a JSON representation of the document store used for serialisation.
- *
- * @return {Object} JSON format
- * @memberOf DocumentStore
- */
-elasticlunr.DocumentStore.prototype.toJSON = function () {
-  return {
-    docs: this.docs,
-    docInfo: this.docInfo,
-    length: this.length,
-    save: this._save
-  };
 };
 
 /**
