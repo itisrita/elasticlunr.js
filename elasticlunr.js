@@ -633,6 +633,7 @@ elasticlunr.Index.load = function (serialisedData) {
 
   idx._fields = serialisedData.fields;
   idx._ref = serialisedData.ref;
+  idx.documentStoreLength = serialisedData.documentStoreLength;
   idx.pipeline = elasticlunr.Pipeline.load(serialisedData.pipeline);
   idx.index = {};
   for (var field in serialisedData.index) {
@@ -651,6 +652,7 @@ elasticlunr.Index.loadInfo = function (serialisedData) {
   var idx = new this;
 
   idx._fields = serialisedData.fields;
+  idx.documentStoreLength = serialisedData.documentStoreLength;
   idx._ref = serialisedData.ref;
   idx.pipeline = elasticlunr.Pipeline.load(serialisedData.pipeline);
   idx.index = {};
@@ -1065,6 +1067,7 @@ elasticlunr.Index.prototype.infoToJSON = function () {
   return {
     version: elasticlunr.version,
     fields: this._fields,
+    documentStoreLength: this.documentStoreLength,
     ref: this._ref,
     pipeline: this.pipeline.toJSON()
   };
