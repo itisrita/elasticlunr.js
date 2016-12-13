@@ -1,7 +1,7 @@
 {
-  "name": "elasticlunr",
+  "name": "elasticlunrjs",
   "description": "Lightweight full-text search engine in Javascript without DocumnetStore",
-  "version": "0.9.5",
+  "version": "0.9.6",
   "author": "Margarita Kondrateva",
   "keywords": ["search", "text retrieval", "offline search", "full text search"],
   "bugs": "https://github.com/itisrita/elasticlunr.js/issues",
